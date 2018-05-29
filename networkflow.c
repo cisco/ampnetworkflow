@@ -835,7 +835,8 @@ static int _send_rec(uint8_t cmd,
         iter = payload_msg->msg_iter;
         n = copy_from_iter(cb_data->payload, payload_size, &iter);
         if (n != payload_size) {
-            amp_log_err("copy_from_iter(size=%lu) returned %lu", payload_size, n);
+            /* May fail due to an invalid pointer passed from userland */
+            amp_log_info("copy_from_iter(size=%lu) returned %lu", payload_size, n);
             ret = -EFAULT;
             goto done;
         }
@@ -843,7 +844,12 @@ static int _send_rec(uint8_t cmd,
         int err;
         err = memcpy_fromiovecend(cb_data->payload, payload_msg->msg_iov, 0, payload_size);
         if (err != 0) {
-            amp_log_err("memcpy_fromiovecend(size=%lu) returned %d", payload_size, err);
+            if (err == -EFAULT) {
+                /* Invalid pointer passed from userland */
+                amp_log_info("memcpy_fromiovecend(size=%lu) returned %d", payload_size, err);
+            } else {
+                amp_log_err("memcpy_fromiovecend(size=%lu) returned %d", payload_size, err);
+            }
             ret = err;
             goto done;
         }
