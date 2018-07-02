@@ -33,16 +33,10 @@
 *.su
 
 # Additional output files
-.amp_addrcache.o.cmd
-.amp_skactg.o.cmd
-.ampnetworkflow.ko.cmd
-.ampnetworkflow.mod.o.cmd
-.ampnetworkflow.o.cmd
-.networkflow.o.cmd
-.sockcallwatch_kprobe.o.cmd
+.*.o.cmd
+.*.ko.cmd
+*.mod.c
 .tmp_versions/
 Module.symvers
-ampnetworkflow.mod.c
-common/src/.amp_log.o.cmd
 modules.order
 
