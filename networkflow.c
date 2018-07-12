@@ -419,7 +419,7 @@ char *_get_proc_path(struct task_struct *task, char *buf, int buflen)
     mm = get_task_mm(task);
     if (!mm) {
         /* most likely, task was killed */
-        amp_log_info("get_task_mm returned NULL (pid %d has already exited)", task->tgid);
+        amp_log_debug("get_task_mm returned NULL (pid %d has already exited)", task->tgid);
         goto out;
     }
     down_read(&mm->mmap_sem);
@@ -889,14 +889,14 @@ typedef struct {
 static inline void __register_release_task(_register_release_cb_t *cb_data)
 {
     int err;
-    amp_log_info("register");
+    amp_log_debug("register");
     err = amp_scw_register_release(cb_data->func);
     if (err) {
         amp_log_err("amp_scw_register_release failed: %d", err);
     }
     kmem_cache_free(_g_state.register_release_kmem_cache, cb_data);
     cb_data = NULL;
-    amp_log_info("done");
+    amp_log_debug("done");
 }
 
 #ifdef INIT_WORK_USES_CONTAINER
@@ -933,7 +933,7 @@ static int _register_release(struct socket *sock)
            handler. Therefore, some socket release calls may be missed.
            We mitigate this by pre-registering inet_stream_ops.release and
            inet_dgram_ops.release */
-        amp_log_info("register");
+        amp_log_debug("register");
 
         /* can't yield while in a jprobe handler; use GFP_ATOMIC */
         cb_data = kmem_cache_alloc(_g_state.register_release_kmem_cache, GFP_ATOMIC);
@@ -950,7 +950,7 @@ static int _register_release(struct socket *sock)
         INIT_WORK(&cb_data->work, _register_release_task, cb_data);
 #endif
         (void)schedule_work(&cb_data->work);
-        amp_log_info("done");
+        amp_log_debug("done");
     }
 
 done:
@@ -1059,7 +1059,7 @@ static void _sendmsg_cb(struct kiocb *iocb,
                http://daniel.haxx.se/blog/2014/10/25/pretending-port-zero-is-a-normal-one/).
                in this case, use a zeroed-out sock_peer_name */
             if (sock->sk->sk_protocol == IPPROTO_TCP) {
-                amp_log_info("!sock_connected && !msg->msg_name");
+                amp_log_debug("!sock_connected && !msg->msg_name");
                 sock_peer_name.ss_family = 0;
             } else if (!sock_connected) {
                 amp_log_info("msg->msg_name is NULL");
@@ -1391,7 +1391,7 @@ static int _set_monitoring(struct sk_buff *skb, struct genl_info *info)
         goto done;
     }
     time_limit = nla_get_u32(info->attrs[AMP_NKE_ATTR_TIME_LIMIT]);
-    amp_log_info("(pid %u, conn_limit %u, time_limit %u)", pid, conn_limit, time_limit);
+    amp_log_debug("(pid %u, conn_limit %u, time_limit %u)", pid, conn_limit, time_limit);
     amp_skactg_update_proc_limits(&_g_skactg, pid, conn_limit, time_limit);
 
 done:
@@ -1410,7 +1410,7 @@ static int _forget_monitoring(struct sk_buff *skb, struct genl_info *info)
         goto done;
     }
     pid = nla_get_u32(info->attrs[AMP_NKE_ATTR_PID]);
-    amp_log_info("(pid %u)", pid);
+    amp_log_debug("(pid %u)", pid);
     amp_skactg_forget_proc(&_g_skactg, pid);
 
 done:
@@ -1502,10 +1502,10 @@ static int _action(struct sk_buff *skb, struct genl_info *info)
         (void)nla_strlcpy(detection.detection_name, info->attrs[AMP_NKE_ATTR_DETECTION_NAME], sizeof(detection.detection_name));
     }
 
-    amp_log_info("AMP_NKE_ATTR_FLOW_REMOTE_SOCKADDR = %s, "
-                 "AMP_NKE_ATTR_REMOTE_CLASSIFICATION = %d, "
-                 "AMP_NKE_ATTR_CACHE_REMOTE = %d, "
-                 "AMP_NKE_ATTR_DETECTION_NAME = %s",
+    amp_log_debug("AMP_NKE_ATTR_FLOW_REMOTE_SOCKADDR = %s, "
+                  "AMP_NKE_ATTR_REMOTE_CLASSIFICATION = %d, "
+                  "AMP_NKE_ATTR_CACHE_REMOTE = %d, "
+                  "AMP_NKE_ATTR_DETECTION_NAME = %s",
             amp_addr_to_str((struct sockaddr *)remote_addr, addr_str,
             sizeof(addr_str)), detection.remote_classification, cache_remote,
             detection.detection_name);
