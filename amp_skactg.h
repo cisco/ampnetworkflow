@@ -29,6 +29,10 @@ typedef struct {
     uint32_t sk_count;
     uint32_t max_sk_count;
     uint64_t cur_sk_id;
+
+    uint32_t last_proc_drop_msg;
+    uint32_t dropped_procs;
+
     /** linked list head */
     struct amp_proc *newest_amp_proc;
     /** linked list tail */

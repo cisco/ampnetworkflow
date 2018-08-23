@@ -930,9 +930,24 @@ int amp_skactg_update_proc_limits(amp_skactg_t *handle, pid_t tgid,
     if (!amp_proc) {
         /* delete oldest proc if necessary */
         while (handle->proc_count >= handle->max_proc_count) {
-            amp_log(AMP_LOG_INFO, KERN_INFO KBUILD_MODNAME ": <info> dropping oldest ");
-            _dump_proc(AMP_LOG_INFO, handle->oldest_amp_proc);
-            amp_log(AMP_LOG_INFO, "\n");
+            /* this could get noisy if a large number of processes are
+               started. limit the frequency of output. */
+            uint32_t cur_uptime = (uint32_t)CUR_UPTIME();
+            if (handle->last_proc_drop_msg == cur_uptime) {
+                handle->dropped_procs++;
+                amp_log(AMP_LOG_DEBUG, KERN_INFO KBUILD_MODNAME ": <debug> dropping oldest ");
+                _dump_proc(AMP_LOG_DEBUG, handle->oldest_amp_proc);
+                amp_log(AMP_LOG_DEBUG, "\n");
+            } else {
+                if (handle->dropped_procs > 0) {
+                    amp_log(AMP_LOG_INFO, KERN_INFO KBUILD_MODNAME ": <info> dropped %u procs\n", handle->dropped_procs);
+                    handle->dropped_procs = 0;
+                }
+                handle->last_proc_drop_msg = cur_uptime;
+                amp_log(AMP_LOG_INFO, KERN_INFO KBUILD_MODNAME ": <info> dropping oldest ");
+                _dump_proc(AMP_LOG_INFO, handle->oldest_amp_proc);
+                amp_log(AMP_LOG_INFO, "\n");
+            }
             _forget_proc(handle, handle->oldest_amp_proc);
         }
         /* add new proc */

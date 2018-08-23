@@ -82,6 +82,7 @@ static const struct proto_ops *_g_udpv6_ops = NULL;
 
 static struct {
     atomic_t genlmsg_seq;
+
     /** nl_portid - only send messages to this peer, and do not send at all if
       *             it is 0.
       * set nl_portid whenever a message is received from userland, and reset it
@@ -89,6 +90,9 @@ static struct {
       * that the peer is a process owned by root. */
     uint32_t nl_portid;
     struct mutex portid_mutex;
+    uint32_t last_drop_msg;
+    uint32_t num_dropped_msgs;
+
     atomic_t num_rec_queued;
     struct workqueue_struct *proc_name_wq;
     struct workqueue_struct *msg_send_wq;
@@ -682,7 +686,19 @@ static inline size_t _msg_send_offset(_send_rec_cb_t *cb_data,
                 amp_log_info("peer disconnected");
                 _g_state.nl_portid = 0;
             } else if (err == -EAGAIN) {
-                amp_log_info("dropped msg");
+                /* this could get noisy if a large number of messages are
+                   dropped. limit the frequency of output. */
+                uint32_t cur_uptime = (uint32_t)CUR_UPTIME();
+                if (_g_state.last_drop_msg == cur_uptime) {
+                    _g_state.num_dropped_msgs++;
+                } else {
+                    if (_g_state.num_dropped_msgs > 0) {
+                        amp_log_info("dropped %u msgs", _g_state.num_dropped_msgs);
+                        _g_state.num_dropped_msgs = 0;
+                    }
+                    _g_state.last_drop_msg = cur_uptime;
+                    amp_log_info("dropped msg");
+                }
             } else {
                 amp_log_err("genlmsg_unicast failed: %d", err);
                 goto done;
