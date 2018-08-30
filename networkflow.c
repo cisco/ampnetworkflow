@@ -1650,39 +1650,45 @@ int init_module(void)
        operations */
     err = amp_scw_register_sendmsg(inet_stream_ops.sendmsg);
     if (err != 0) {
-        amp_log_err("amp_scw_register_sendmsg(inet_stream_ops.sendmsg) failed");
+        amp_log_err("amp_scw_register_sendmsg(inet_stream_ops.sendmsg (%s NULL)) failed: %d", inet_stream_ops.sendmsg ? "!=" : "==", err);
         ret = err;
-        goto deinit_scw;
+        /* do not goto deinit_scw and return right away - continue and try to
+           register more probes so the logs contain more information */
     }
     err = amp_scw_register_recvmsg(inet_stream_ops.recvmsg);
     if (err != 0) {
-        amp_log_err("amp_scw_register_recvmsg(inet_stream_ops.recvmsg) failed");
+        amp_log_err("amp_scw_register_recvmsg(inet_stream_ops.recvmsg (%s NULL)) failed: %d", inet_stream_ops.recvmsg ? "!=" : "==", err);
         ret = err;
-        goto deinit_scw;
+        /* do not goto deinit_scw and return right away - continue and try to
+           register more probes so the logs contain more information */
     }
     err = amp_scw_register_connect(inet_stream_ops.connect);
     if (err != 0) {
-        amp_log_err("amp_scw_register_connect(inet_stream_ops.connect) failed");
+        amp_log_err("amp_scw_register_connect(inet_stream_ops.connect (%s NULL)) failed: %d", inet_stream_ops.connect ? "!=" : "==", err);
         ret = err;
-        goto deinit_scw;
+        /* do not goto deinit_scw and return right away - continue and try to
+           register more probes so the logs contain more information */
     }
     err = amp_scw_register_accept(inet_stream_ops.accept);
     if (err != 0) {
-        amp_log_err("amp_scw_register_accept(inet_stream_ops.accept) failed");
+        amp_log_err("amp_scw_register_accept(inet_stream_ops.accept (%s NULL)) failed: %d", inet_stream_ops.accept ? "!=" : "==", err);
         ret = err;
-        goto deinit_scw;
+        /* do not goto deinit_scw and return right away - continue and try to
+           register more probes so the logs contain more information */
     }
     err = amp_scw_register_sendmsg(inet_dgram_ops.sendmsg);
     if (err != 0) {
-        amp_log_err("amp_scw_register_sendmsg(inet_dgram_ops.sendmsg) failed");
+        amp_log_err("amp_scw_register_sendmsg(inet_dgram_ops.sendmsg (%s NULL)) failed: %d", inet_dgram_ops.sendmsg ? "!=" : "==", err);
         ret = err;
-        goto deinit_scw;
+        /* do not goto deinit_scw and return right away - continue and try to
+           register more probes so the logs contain more information */
     }
     err = amp_scw_register_recvmsg(inet_dgram_ops.recvmsg);
     if (err != 0) {
-        amp_log_err("amp_scw_register_recvmsg(inet_dgram_ops.recvmsg) failed");
+        amp_log_err("amp_scw_register_recvmsg(inet_dgram_ops.recvmsg (%s NULL)) failed: %d", inet_dgram_ops.recvmsg ? "!=" : "==", err);
         ret = err;
-        goto deinit_scw;
+        /* do not goto deinit_scw and return right away - continue and try to
+           register more probes so the logs contain more information */
     }
 
     /* register accept handler from tcp_prot.
@@ -1690,23 +1696,28 @@ int init_module(void)
         uses the same handler function */
     err = amp_scw_register_post_accept(tcp_prot.accept);
     if (err != 0) {
-        amp_log_err("amp_scw_register_post_accept(tcp_prot.accept) failed");
+        amp_log_err("amp_scw_register_post_accept(tcp_prot.accept (%s NULL)) failed: %d", tcp_prot.accept ? "!=" : "==", err);
         ret = err;
-        goto deinit_scw;
+        /* do not goto deinit_scw and return right away - continue and try to
+           register more probes so the logs contain more information */
     }
 
     /* register release handler from inet_stream_ops and inet_dgram_ops. this
        will only cover IPv4 sockets */
     err = amp_scw_register_release(inet_stream_ops.release);
     if (err != 0) {
-        amp_log_err("amp_scw_register_release(inet_stream_ops.release) failed");
+        amp_log_err("amp_scw_register_release(inet_stream_ops.release (%s NULL)) failed: %d", inet_stream_ops.release ? "!=" : "==", err);
         ret = err;
-        goto deinit_scw;
+        /* do not goto deinit_scw and return right away - continue and try to
+           register more probes so the logs contain more information */
     }
     err = amp_scw_register_release(inet_dgram_ops.release);
     if (err != 0) {
-        amp_log_err("amp_scw_register_release(inet_dgram_ops.release) failed");
+        amp_log_err("amp_scw_register_release(inet_dgram_ops.release (%s NULL)) failed: %d", inet_dgram_ops.release ? "!=" : "==", err);
         ret = err;
+    }
+
+    if (ret != 0) {
         goto deinit_scw;
     }
 
