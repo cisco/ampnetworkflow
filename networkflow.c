@@ -401,7 +401,7 @@ done:
 /* see also http://www.spinics.net/lists/newbies/msg19536.html */
 /* if d_path does not return the full path, we may need to look at something
    like http://www.gossamer-threads.com/lists/linux/kernel/343214 */
-char *_get_proc_path(struct task_struct *task, char *buf, int buflen)
+static char *_get_proc_path(struct task_struct *task, char *buf, int buflen)
 {
     struct file *exe_file = NULL;
 #ifndef MM_STRUCT_EXE_FILE
@@ -423,7 +423,7 @@ char *_get_proc_path(struct task_struct *task, char *buf, int buflen)
     mm = get_task_mm(task);
     if (!mm) {
         /* most likely, task was killed */
-        amp_log_debug("get_task_mm returned NULL (pid %d has already exited)", task->tgid);
+        amp_log_debug("get_task_mm returned NULL (pid %d has already exited)", task_tgid_nr(task));
         goto out;
     }
     down_read(&mm->mmap_sem);
@@ -830,7 +830,7 @@ static int _send_rec(uint8_t cmd,
     }
     get_task_struct(task);
     cb_data->task = task;
-    cb_data->pid = task->tgid;
+    cb_data->pid = task_tgid_nr(task);
     cb_data->uid = TASK_UID(task);
     cb_data->cmd = cmd;
     cb_data->sk_op = sk_op;
@@ -1014,7 +1014,7 @@ static void _recvmsg_cb(struct kiocb *iocb, struct socket *sock,
     }
 
     send_rec_size = (uint32_t)size;
-    do_send_rec = amp_skactg_recvmsg(&_g_skactg, current->tgid, sock->sk, &sock_name, &sock_peer_name, &sk_id, &send_rec_size, &send_rec_seqnum, &detect, &detection);
+    do_send_rec = amp_skactg_recvmsg(&_g_skactg, task_tgid_nr(current), sock->sk, &sock_name, &sock_peer_name, &sk_id, &send_rec_size, &send_rec_seqnum, &detect, &detection);
     if (do_send_rec < 0) {
         amp_log_err("amp_skactg_recvmsg returned %d", do_send_rec);
         goto done;
@@ -1022,7 +1022,7 @@ static void _recvmsg_cb(struct kiocb *iocb, struct socket *sock,
 
     if (do_send_rec) {
         _printsockinfo(sock_str, sizeof(sock_str), (struct sockaddr *)&sock_name, (struct sockaddr *)&sock_peer_name, sock_proto);
-        amp_log_debug("recvmsg: pid %d, len %lu, sock %p, sk %p: %s", current->tgid, size, sock, sock->sk, sock_str);
+        amp_log_debug("recvmsg: pid %d, len %lu, sock %p, sk %p: %s", task_tgid_nr(current), size, sock, sock->sk, sock_str);
 
         err = _send_rec(AMP_NKE_CMD_REC_SK_OP, AMP_NKE_SK_OP_RECV, current, &sock_name, &sock_peer_name, sock_proto, sk_id, (send_rec_size > 0) ? msg : NULL, send_rec_size, send_rec_seqnum, NULL);
         if (err != 0) {
@@ -1099,7 +1099,7 @@ static void _sendmsg_cb(struct kiocb *iocb,
     }
 
     send_rec_size = (uint32_t)size;
-    do_send_rec = amp_skactg_sendmsg(&_g_skactg, current->tgid, sock->sk, &sock_name, &sock_peer_name, &sk_id, &send_rec_size, &send_rec_seqnum, &detect, &detection);
+    do_send_rec = amp_skactg_sendmsg(&_g_skactg, task_tgid_nr(current), sock->sk, &sock_name, &sock_peer_name, &sk_id, &send_rec_size, &send_rec_seqnum, &detect, &detection);
     if (do_send_rec < 0) {
         amp_log_err("amp_skactg_sendmsg returned %d", do_send_rec);
         goto done;
@@ -1108,7 +1108,7 @@ static void _sendmsg_cb(struct kiocb *iocb,
     if (do_send_rec) {
         _printsockinfo(sock_str, sizeof(sock_str), (struct sockaddr *)&sock_name, (struct sockaddr *)&sock_peer_name, sock_proto);
         _iovec_to_str(msg, send_rec_size, data_str, sizeof(data_str));
-        amp_log_debug("sendmsg: pid %d, data [%s], len %lu, sock %p, sk %p: %s", current->tgid, data_str, size, sock, sock->sk, sock_str);
+        amp_log_debug("sendmsg: pid %d, data [%s], len %lu, sock %p, sk %p: %s", task_tgid_nr(current), data_str, size, sock, sock->sk, sock_str);
 
         err = _send_rec(AMP_NKE_CMD_REC_SK_OP, AMP_NKE_SK_OP_SEND, current, &sock_name, &sock_peer_name, sock_proto, sk_id, (send_rec_size > 0) ? msg : NULL, send_rec_size, send_rec_seqnum, NULL);
         if (err != 0) {
@@ -1167,7 +1167,7 @@ static void _connect_cb(struct socket *sock,
         goto done;
     }
 
-    do_send_rec = amp_skactg_connect(&_g_skactg, current->tgid, sock->sk, &sock_name, &sock_peer_name, &sk_id, &detect, &detection);
+    do_send_rec = amp_skactg_connect(&_g_skactg, task_tgid_nr(current), sock->sk, &sock_name, &sock_peer_name, &sk_id, &detect, &detection);
     if (do_send_rec < 0) {
         amp_log_err("amp_skactg_connect returned %d", do_send_rec);
         goto done;
@@ -1175,7 +1175,7 @@ static void _connect_cb(struct socket *sock,
 
     if (do_send_rec) {
         _printsockinfo(sock_str, sizeof(sock_str), (struct sockaddr *)&sock_name, (struct sockaddr *)&sock_peer_name, sock_proto);
-        amp_log_debug("connect: pid %d, sock %p, sk %p: %s", current->tgid, sock, sock->sk, sock_str);
+        amp_log_debug("connect: pid %d, sock %p, sk %p: %s", task_tgid_nr(current), sock, sock->sk, sock_str);
 
         err = _send_rec(AMP_NKE_CMD_REC_SK_OP, AMP_NKE_SK_OP_CONNECT, current, &sock_name, &sock_peer_name, sock_proto, sk_id, NULL, 0, 0, NULL);
         if (err != 0) {
@@ -1231,7 +1231,7 @@ static void _accept_cb(struct socket *sock,
         goto done;
     }
 
-    amp_log_debug("accept: pid %d, sock %p, sock->sk %p, newsock %p, newsock->sk %p", current->tgid, sock, sock->sk, newsock, newsock ? newsock->sk : NULL);
+    amp_log_debug("accept: pid %d, sock %p, sock->sk %p, newsock %p, newsock->sk %p", task_tgid_nr(current), sock, sock->sk, newsock, newsock ? newsock->sk : NULL);
 
 done:
     return;
@@ -1266,7 +1266,7 @@ static void _release_cb(struct socket *sock)
 
     if (do_send_rec) {
         _printsockinfo(sock_str, sizeof(sock_str), (struct sockaddr *)&sock_name, sock_connected ? (struct sockaddr *)&sock_peer_name : NULL, sock_proto);
-        amp_log_debug("release: pid %d, sock %p, sk %p: %s", current->tgid, sock, sock->sk, sock_str);
+        amp_log_debug("release: pid %d, sock %p, sk %p: %s", task_tgid_nr(current), sock, sock->sk, sock_str);
 
         err = _send_rec(AMP_NKE_CMD_REC_SK_OP, AMP_NKE_SK_OP_RELEASE, current, &sock_name, sock_connected ? &sock_peer_name : NULL, sock_proto, sk_id, NULL, 0, 0, NULL);
         if (err != 0) {
@@ -1327,7 +1327,7 @@ static void _post_accept_cb(struct sock *sk)
         goto done;
     }
 
-    do_send_rec = amp_skactg_accept(&_g_skactg, current->tgid, sk, &sock_name, &sock_peer_name, &sk_id, &detect, &detection);
+    do_send_rec = amp_skactg_accept(&_g_skactg, task_tgid_nr(current), sk, &sock_name, &sock_peer_name, &sk_id, &detect, &detection);
     if (do_send_rec < 0) {
         amp_log_err("amp_skactg_accept returned %d", do_send_rec);
         goto done;
@@ -1335,7 +1335,7 @@ static void _post_accept_cb(struct sock *sk)
 
     if (do_send_rec) {
         _printsockinfo(sock_str, sizeof(sock_str), (struct sockaddr *)&sock_name, (struct sockaddr *)&sock_peer_name, sock_proto);
-        amp_log_debug("post_accept: pid %d, sk %p: %s", current->tgid, sk, sock_str);
+        amp_log_debug("post_accept: pid %d, sk %p: %s", task_tgid_nr(current), sk, sock_str);
 
         err = _send_rec(AMP_NKE_CMD_REC_SK_OP, AMP_NKE_SK_OP_ACCEPT, current, &sock_name, &sock_peer_name, sock_proto, sk_id, NULL, 0, 0, NULL);
         if (err != 0) {
