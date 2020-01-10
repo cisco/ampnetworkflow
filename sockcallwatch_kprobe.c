@@ -120,6 +120,23 @@ int amp_scw_deinit(void)
     _state.register_enabled = 0;
     mutex_unlock(&_state.register_mutex);
 
+    /* unregister kretprobes */
+    /* MUST unregister kretprobes before jprobes. If the system is in a
+     * kretprobe handler while a jprobe is being unregistered, the kernel will
+     * crash on a breakpoint (int3).
+     * Fixes https://access.redhat.com/solutions/4710551 */
+    write_lock(&_state.kretprobes_list_lock);
+    _state.kretprobes_enabled = 0;
+    write_unlock(&_state.kretprobes_list_lock);
+    while (_state.kretprobes_head) {
+        kret_next = _state.kretprobes_head->next;
+        if (_state.kretprobes_head->registered) {
+            unregister_kretprobe(&_state.kretprobes_head->probe);
+        }
+        kmem_cache_free(_state.kretprobe_kmem_cache, _state.kretprobes_head);
+        _state.kretprobes_head = kret_next;
+    }
+
     /* unregister jprobes */
     write_lock(&_state.jprobes_list_lock);
     _state.jprobes_enabled = 0;
@@ -131,19 +148,6 @@ int amp_scw_deinit(void)
         }
         kmem_cache_free(_state.jprobe_kmem_cache, _state.jprobes_head);
         _state.jprobes_head = j_next;
-    }
-
-    /* unregister kretprobes */
-    write_lock(&_state.kretprobes_list_lock);
-    _state.kretprobes_enabled = 0;
-    write_unlock(&_state.kretprobes_list_lock);
-    while (_state.kretprobes_head) {
-        kret_next = _state.kretprobes_head->next;
-        if (_state.kretprobes_head->registered) {
-            unregister_kretprobe(&_state.kretprobes_head->probe);
-        }
-        kmem_cache_free(_state.kretprobe_kmem_cache, _state.kretprobes_head);
-        _state.kretprobes_head = kret_next;
     }
 
     /* probe handlers are now no longer running */
