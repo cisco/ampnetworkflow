@@ -38,6 +38,7 @@ enum {
     AMP_NKE_CMD_REC_SK_OP,
     AMP_NKE_CMD_REC_DETECT,
     AMP_NKE_CMD_REC_END,
+    AMP_NKE_CMD_REC_HELLO,
 };
 
 /* generic netlink - attributes */

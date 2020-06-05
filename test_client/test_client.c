@@ -31,6 +31,7 @@
 struct cb_data {
     uint16_t amp_family_id;
     bool is_set;
+    bool hello_rec;
     bool monitor_all;
     bool detect_all;
     struct mnl_socket *nl;
@@ -271,6 +272,10 @@ static int _data_cb(const struct nlmsghdr *nlh, void *data)
             case AMP_NKE_CMD_REC_END:
                 printf("END");
                 break;
+            case AMP_NKE_CMD_REC_HELLO:
+                printf("HELLO REC");
+                cb_data->hello_rec = true;
+                break;
             default:
                 printf("???");
                 break;
@@ -375,6 +380,43 @@ done:
     return ret;
 }
 
+static int _rec_msg(struct cb_data *cb_data, char *buf, int buf_size, struct mnl_socket *nl, unsigned int seq, unsigned int portid)
+{
+    int n;
+    int run = 1;
+    int ret = -1;
+
+    if (!cb_data || !buf || !nl) {
+        fprintf(stderr, "_rec_msg: NULL argument passed\n");
+        goto done;
+    }
+
+    while (run > 0) {
+        n = mnl_socket_recvfrom(nl, buf, buf_size);
+        if (n <= 0) {
+            if (n < 0) {
+                perror("mnl_socket_recvfrom");
+            } else {
+                fprintf(stderr, "mnl_socket_recvfrom: disconnected\n");
+            }
+            ret = EXIT_FAILURE;
+            goto done;
+        }
+        run = mnl_cb_run(buf, n, seq, portid, _data_cb, cb_data);
+        if (run < 0) {
+            if (errno == ENOENT) {
+                fprintf(stderr, "Can not find family %s - kernel module may not be loaded\n", AMP_NKE_GENL_FAM_NAME);
+            }
+            perror("mnl_cb_run");
+            ret = EXIT_FAILURE;
+            goto done;
+        }
+    }
+    ret = 0;
+done:
+    return ret;
+}
+
 static void _usage(const char *name)
 {
     printf("USAGE: %s [options]\n"
@@ -392,7 +434,7 @@ int main(int argc, char **argv)
     struct nlmsghdr *nlh;
     int ret = EXIT_SUCCESS;
     unsigned int seq, portid;
-    struct cb_data cb_data = { 0, false, false, false, NULL, 0 };
+    struct cb_data cb_data = { 0, false, false, false, false, NULL, 0 };
     int n;
     time_t last_dump_cmd = 0;
     time_t now;
@@ -467,28 +509,9 @@ int main(int argc, char **argv)
         ret = EXIT_FAILURE;
         goto done;
     }
-
-    run = 1;
-    while (run > 0) {
-        n = mnl_socket_recvfrom(nl, buf, sizeof(buf));
-        if (n <= 0) {
-            if (n < 0) {
-                perror("mnl_socket_recvfrom");
-            } else {
-                fprintf(stderr, "mnl_socket_recvfrom: disconnected\n");
-            }
-            ret = EXIT_FAILURE;
-            goto done;
-        }
-        run = mnl_cb_run(buf, n, seq, portid, _data_cb, &cb_data);
-        if (run < 0) {
-            if (errno == ENOENT) {
-                fprintf(stderr, "Can not find family %s - kernel module may not be loaded\n", AMP_NKE_GENL_FAM_NAME);
-            }
-            perror("mnl_cb_run");
-            ret = EXIT_FAILURE;
-            goto done;
-        }
+    
+    if(_rec_msg(&cb_data, buf, sizeof(buf), nl, seq, portid) != 0) {
+        goto done;
     }
 
     if (!cb_data.is_set) {
@@ -518,14 +541,28 @@ int main(int argc, char **argv)
         }
 
         /* send hello */
+        printf("Sending Hello...\n");
         seq++;
-        nlh = _prepare_msg(buf, cb_data.amp_family_id, NLM_F_REQUEST, seq,
+        nlh = _prepare_msg(buf, cb_data.amp_family_id, NLM_F_REQUEST | NLM_F_ACK, seq,
                            AMP_NKE_GENL_VERSION, AMP_NKE_CMD_HELLO);
             if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
             perror("mnl_socket_sendto");
             ret = EXIT_FAILURE;
             goto done;
         }
+
+        /* Recieve hello rec */
+        printf("Looking for AMP_NKE_CMD_REC_HELLO response...\n");
+        if(_rec_msg(&cb_data, buf, sizeof(buf), nl, seq, portid) != 0) {
+            goto done;
+        }
+
+        if (!cb_data.hello_rec) {
+            fprintf(stderr, "No AMP_NKE_CMD_REC_HELLO response from kernel module\n");
+            goto done;
+        }
+        printf("AMP_NKE_CMD_REC_HELLO response recieved from kernel module\n");
+
 
         /* reset monitoring */
         seq++;
