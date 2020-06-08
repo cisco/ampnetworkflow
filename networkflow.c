@@ -1450,6 +1450,8 @@ done:
         mutex_locked = 0;
     }
 
+    atomic_dec(&_g_state.num_rec_queued);
+
     return;
 }
 
