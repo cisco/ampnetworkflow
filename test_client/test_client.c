@@ -551,7 +551,7 @@ int main(int argc, char **argv)
             goto done;
         }
 
-        /* Recieve hello rec */
+        /* Receive hello rec */
         printf("Looking for AMP_NKE_CMD_REC_HELLO response...\n");
         if(_rec_msg(&cb_data, buf, sizeof(buf), nl, seq, portid) != 0) {
             goto done;
@@ -561,7 +561,7 @@ int main(int argc, char **argv)
             fprintf(stderr, "No AMP_NKE_CMD_REC_HELLO response from kernel module\n");
             goto done;
         }
-        printf("AMP_NKE_CMD_REC_HELLO response recieved from kernel module\n");
+        printf("AMP_NKE_CMD_REC_HELLO response received from kernel module\n");
 
 
         /* reset monitoring */
