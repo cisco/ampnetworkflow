@@ -1386,7 +1386,6 @@ static void _msg_send_hello_rec(void)
     struct sk_buff *skb = NULL;
     void *genl_msg;
 
-    /* use at least 8 kB so we can fit the payload and filename */
     skb = alloc_skb(SKB_MAX_ALLOC, GFP_KERNEL);
     if (!skb) {
         amp_log_err("alloc_skb failed");
@@ -1437,8 +1436,6 @@ done:
         mutex_unlock(&_g_state.portid_mutex);
         mutex_locked = 0;
     }
-
-    atomic_dec(&_g_state.num_rec_queued);
 
     return;
 }
