@@ -1436,7 +1436,6 @@ done:
         mutex_unlock(&_g_state.portid_mutex);
         mutex_locked = 0;
     }
-    return;
 }
 
 static int _hello(struct sk_buff *skb, struct genl_info *info)
