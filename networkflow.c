@@ -1379,9 +1379,69 @@ done:
     return ret;
 }
 
+static void _msg_send_hello_rec(void)
+{
+    int err;
+    int mutex_locked = 0;
+    struct sk_buff *skb = NULL;
+    void *genl_msg;
+
+    skb = alloc_skb(SKB_MAX_ALLOC, GFP_KERNEL);
+    if (!skb) {
+        amp_log_err("alloc_skb failed");
+        goto done;
+    }
+
+    genl_msg = GENLMSG_PUT(skb, 0 /* portid */, 0, &_g_genl_family, 0 /* flags */, AMP_NKE_CMD_REC_HELLO);
+    if (genl_msg == NULL) {
+        amp_log_err("genlmsg_put failed");
+        goto done;
+    }
+
+    (void)genlmsg_end(skb, genl_msg);
+
+    mutex_lock(&_g_state.portid_mutex);
+    mutex_locked = 1;
+    if (_g_state.nl_portid != 0) {
+        err = GENLMSG_UNICAST(&init_net, skb, _g_state.nl_portid);
+        /* don't free skb after handing it off to genlmsg_unicast, even if
+           the function returns an error */
+        skb = NULL;
+        /* genlmsg_unicast returns -ECONNREFUSED if there are no listeners, and
+           -EAGAIN if the listener's buffer is full */
+        /** @todo TODO implement flow control with the client? The client sees
+                  ENOBUFS when the kernel sees EAGAIN */
+        if (err != 0) {
+            if (err == -ECONNREFUSED) {
+                /* peer disconnected */
+                amp_log_info("peer disconnected");
+                _g_state.nl_portid = 0;
+            } else if (err == -EAGAIN) {
+                amp_log_info("dropped msg");
+            } else {
+                amp_log_err("genlmsg_unicast failed: %d", err);
+                goto done;
+            }
+        }
+    }
+    mutex_unlock(&_g_state.portid_mutex);
+    mutex_locked = 0;
+
+done:
+    if (skb) {
+        nlmsg_free(skb);
+        skb = NULL;
+    }
+    if (mutex_locked) {
+        mutex_unlock(&_g_state.portid_mutex);
+        mutex_locked = 0;
+    }
+}
+
 static int _hello(struct sk_buff *skb, struct genl_info *info)
 {
     (void)_update_portid(info);
+    _msg_send_hello_rec();
     return 0;
 }
 
