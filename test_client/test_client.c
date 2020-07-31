@@ -380,14 +380,14 @@ done:
     return ret;
 }
 
-static int _rec_msg(struct cb_data *cb_data, char *buf, int buf_size, struct mnl_socket *nl, unsigned int seq, unsigned int portid)
+static int _recv_acked_msg(struct cb_data *cb_data, char *buf, int buf_size, struct mnl_socket *nl, unsigned int seq, unsigned int portid)
 {
     int n;
     int run = 1;
     int ret = -1;
 
     if (!cb_data || !buf || !nl) {
-        fprintf(stderr, "_rec_msg: NULL argument passed\n");
+        fprintf(stderr, "_recv_acked_msg: NULL argument passed\n");
         goto done;
     }
 
@@ -510,7 +510,7 @@ int main(int argc, char **argv)
         goto done;
     }
     
-    if(_rec_msg(&cb_data, buf, sizeof(buf), nl, seq, portid) != 0) {
+    if(_recv_acked_msg(&cb_data, buf, sizeof(buf), nl, seq, portid) != 0) {
         goto done;
     }
 
@@ -553,7 +553,7 @@ int main(int argc, char **argv)
 
         /* Receive hello rec */
         printf("Looking for AMP_NKE_CMD_REC_HELLO response...\n");
-        if(_rec_msg(&cb_data, buf, sizeof(buf), nl, seq, portid) != 0) {
+        if(_recv_acked_msg(&cb_data, buf, sizeof(buf), nl, seq, portid) != 0) {
             goto done;
         }
 
