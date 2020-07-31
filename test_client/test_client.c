@@ -545,7 +545,7 @@ int main(int argc, char **argv)
         seq++;
         nlh = _prepare_msg(buf, cb_data.amp_family_id, NLM_F_REQUEST | NLM_F_ACK, seq,
                            AMP_NKE_GENL_VERSION, AMP_NKE_CMD_HELLO);
-            if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
+        if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
             perror("mnl_socket_sendto");
             ret = EXIT_FAILURE;
             goto done;
