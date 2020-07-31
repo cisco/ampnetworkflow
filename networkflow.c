@@ -1418,19 +1418,7 @@ static void _msg_send_hello_rec(void)
                 amp_log_info("peer disconnected");
                 _g_state.nl_portid = 0;
             } else if (err == -EAGAIN) {
-                /* this could get noisy if a large number of messages are
-                   dropped. limit the frequency of output. */
-                uint32_t cur_uptime = (uint32_t)CUR_UPTIME();
-                if (_g_state.last_drop_msg == cur_uptime) {
-                    _g_state.num_dropped_msgs++;
-                } else {
-                    if (_g_state.num_dropped_msgs > 0) {
-                        amp_log_info("dropped %u msgs", _g_state.num_dropped_msgs);
-                        _g_state.num_dropped_msgs = 0;
-                    }
-                    _g_state.last_drop_msg = cur_uptime;
-                    amp_log_info("dropped msg");
-                }
+                amp_log_info("dropped msg");
             } else {
                 amp_log_err("genlmsg_unicast failed: %d", err);
                 goto done;
@@ -1458,7 +1446,7 @@ done:
 static int _hello(struct sk_buff *skb, struct genl_info *info)
 {
     (void)_update_portid(info);
-    (void)_msg_send_hello_rec();
+    _msg_send_hello_rec();
     return 0;
 }
 
