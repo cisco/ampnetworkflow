@@ -80,7 +80,20 @@ static const struct proto_ops *_g_udpv4_ops = NULL;
 static const struct proto_ops *_g_tcpv6_ops = NULL;
 static const struct proto_ops *_g_udpv6_ops = NULL;
 
+typedef struct _deferred_register_release {
+    amp_scw_release_fn_t func;
+    struct work_struct work;
+    struct list_head list;
+} _deferred_register_release_t;
+
 static struct {
+    bool portid_mutex_init;
+    bool addrcache_init;
+    bool skactg_init;
+    bool genl_registered;
+    bool scw_init;
+    bool deferred_register_release_init;
+
     atomic_t genlmsg_seq;
 
     /** nl_portid - only send messages to this peer, and do not send at all if
@@ -93,6 +106,13 @@ static struct {
     uint32_t last_drop_msg;
     uint32_t num_dropped_msgs;
 
+    spinlock_t deferred_register_release_lock;
+    struct list_head deferred_register_release_list;
+    /** deferred_register_release_disabled - this is needed during shutdown so
+      * any new requests from scw handlers to register a release handler are
+      * ignored. */
+    bool deferred_register_release_disabled;
+
     atomic_t num_rec_queued;
     struct workqueue_struct *proc_name_wq;
     struct workqueue_struct *msg_send_wq;
@@ -101,6 +121,7 @@ static struct {
 } _g_state = {
     .genlmsg_seq = ATOMIC_INIT(0),
     .num_rec_queued = ATOMIC_INIT(0),
+    .deferred_register_release_list = LIST_HEAD_INIT(_g_state.deferred_register_release_list),
 };
 
 static amp_skactg_t _g_skactg;
@@ -897,34 +918,26 @@ done:
     return ret;
 }
 
-typedef struct {
-    amp_scw_release_fn_t func;
-    struct work_struct work;
-} _register_release_cb_t;
-
-static inline void __register_release_task(_register_release_cb_t *cb_data)
+static inline void __register_release_task(_deferred_register_release_t *cb_data)
 {
     int err;
-    amp_log_debug("register");
+    amp_log_info("register_release");
     err = amp_scw_register_release(cb_data->func);
     if (err) {
         amp_log_err("amp_scw_register_release failed: %d", err);
     }
-    kmem_cache_free(_g_state.register_release_kmem_cache, cb_data);
-    cb_data = NULL;
-    amp_log_debug("done");
 }
 
 #ifdef INIT_WORK_USES_CONTAINER
 static void _register_release_task(struct work_struct *work)
 {
-    _register_release_cb_t *cb_data = container_of(work, _register_release_cb_t, work);
+    _deferred_register_release_t *cb_data = container_of(work, _deferred_register_release_t, work);
     __register_release_task(cb_data);
 }
 #else
 static void _register_release_task(void *param)
 {
-    _register_release_cb_t *cb_data = param;
+    _deferred_register_release_t *cb_data = param;
     __register_release_task(cb_data);
 }
 #endif
@@ -932,7 +945,9 @@ static void _register_release_task(void *param)
 static int _register_release(struct socket *sock)
 {
     int ret = 0;
-    _register_release_cb_t *cb_data;
+    _deferred_register_release_t *item;
+    bool locked = false;
+    bool found = false;
 
     if (!sock->ops->release) {
         amp_log_info("sock->ops->release is NULL");
@@ -940,36 +955,57 @@ static int _register_release(struct socket *sock)
         goto done;
     }
 
-    /* there is no race condition here - sock->ops->release being registered by
-       another thread after this check is fine: */
     if (!amp_scw_is_registered(sock->ops->release)) {
-        /* Run in a separate a thread because register_jprobe may sleep */
-        /* XXX Since we can't wait while in a jprobe handler, we cannot ensure
-           that the socket release probe is in place before exiting this probe
-           handler. Therefore, some socket release calls may be missed.
-           We mitigate this by pre-registering inet_stream_ops.release and
-           inet_dgram_ops.release */
-        amp_log_debug("register");
+        spin_lock(&_g_state.deferred_register_release_lock);
+        locked = true;
 
-        /* can't yield while in a jprobe handler; use GFP_ATOMIC */
-        cb_data = kmem_cache_alloc(_g_state.register_release_kmem_cache, GFP_ATOMIC);
-        if (!cb_data) {
-            amp_log_err("kmem_cache_alloc failed");
-            ret = -ENOMEM;
+        if (_g_state.deferred_register_release_disabled) {
             goto done;
         }
 
-        cb_data->func = sock->ops->release;
+        /* linear search - this list will typically hold no more than 2 items
+         * (release for TCPv6 sockets, release for UDPv6 sockets) */
+        list_for_each_entry(item, &_g_state.deferred_register_release_list, list) {
+            if (item->func == sock->ops->release) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            /* we are in a jprobe handler, and are holding a spinlock; use
+             * GFP_ATOMIC */
+            item = kmem_cache_alloc(_g_state.register_release_kmem_cache, GFP_ATOMIC);
+            if (!item) {
+                amp_log_err("kmem_cache_alloc failed");
+                ret = -ENOMEM;
+                goto done;
+            }
+            item->func = sock->ops->release;
+            list_add_tail(&item->list, &_g_state.deferred_register_release_list);
+            amp_log_info("added deferred_register_release_list item");
+
+            /* Run in a separate a thread because register_jprobe may sleep */
+            /* XXX Since we can't wait while in a jprobe handler, we cannot
+             * ensure that the socket release probe is in place before exiting
+             * this probe handler. Therefore, some socket release calls may be
+             * missed. We mitigate this by pre-registering
+             * inet_stream_ops.release and inet_dgram_ops.release */
 #ifdef INIT_WORK_USES_CONTAINER
-        INIT_WORK(&cb_data->work, _register_release_task);
+            INIT_WORK(&item->work, _register_release_task);
 #else
-        INIT_WORK(&cb_data->work, _register_release_task, cb_data);
+            INIT_WORK(&item->work, _register_release_task, item);
 #endif
-        (void)schedule_work(&cb_data->work);
-        amp_log_debug("done");
+            (void)schedule_work(&item->work);
+
+            spin_unlock(&_g_state.deferred_register_release_lock);
+            locked = false;
+        }
     }
 
 done:
+    if (locked) {
+        spin_unlock(&_g_state.deferred_register_release_lock);
+    }
     return ret;
 }
 
@@ -1641,50 +1677,39 @@ int init_module(void)
     amp_log_info("starting ampnetworkflow");
 
     mutex_init(&_g_state.portid_mutex);
+    _g_state.portid_mutex_init = true;
 
     _g_state.proc_name_kmem_cache = KMEM_CACHE_CREATE("csco_amp_proc_name",
         PATH_MAX, 0 /* align */, 0 /* flags */, NULL /* ctor */);
     if (!_g_state.proc_name_kmem_cache) {
         amp_log_err("kmem_cache_create(proc_name_kmem_cache) failed");
         ret = -ENOMEM;
-        goto wq_destroy;
+        goto done;
     }
     _g_state.register_release_kmem_cache = KMEM_CACHE_CREATE("csco_amp_reg_rel",
-        sizeof(_register_release_cb_t), 0 /* align */, 0 /* flags */,
+        sizeof(_deferred_register_release_t), 0 /* align */, 0 /* flags */,
         NULL /* ctor */);
     if (!_g_state.register_release_kmem_cache) {
         amp_log_err("kmem_cache_create(register_release_kmem_cache) failed");
         ret = -ENOMEM;
-        goto wq_destroy;
-    }
-
-    /* initialize work queues */
-    _g_state.msg_send_wq = create_singlethread_workqueue("csco_amp_msg_wq");
-    if (!_g_state.msg_send_wq) {
-        amp_log_err("create_singlethread_workqueue(msg_send_wq) failed");
-        ret = -ENOMEM;
-        goto wq_destroy;
-    }
-    _g_state.proc_name_wq = create_singlethread_workqueue("csco_amp_prc_wq");
-    if (!_g_state.proc_name_wq) {
-        amp_log_err("create_singlethread_workqueue(proc_name_wq) failed");
-        ret = -ENOMEM;
-        goto wq_destroy;
+        goto done;
     }
 
     err = amp_addrcache_init(&_g_addrcache, UINT32_MAX, UINT32_MAX, UINT32_MAX);
     if (err != 0) {
         ret = err;
         amp_log_err("amp_addrcache_init failed");
-        goto wq_destroy;
+        goto done;
     }
+    _g_state.addrcache_init = true;
 
     err = amp_skactg_init(&_g_skactg, &_g_addrcache, SKACTG_MAX_PROC_COUNT, SKACTG_MAX_SK_COUNT);
     if (err != 0) {
         ret = err;
         amp_log_err("amp_skactg_init failed");
-        goto deinit_addrcache;
+        goto done;
     }
+    _g_state.skactg_init = true;
 
     /* register generic netlink family */
     err = GENL_REGISTER_FAMILY_WITH_OPS(&_g_genl_family,
@@ -1692,17 +1717,36 @@ int init_module(void)
     if (err != 0) {
         amp_log_err("GENL_REGISTER_FAMILY_WITH_OPS failed");
         ret = err;
-        goto deinit_skactg;
+        goto done;
     }
     amp_log_info("_g_genl_family.id %u", _g_genl_family.id);
+    _g_state.genl_registered = true;
+
+    /* initialize work queues */
+    _g_state.msg_send_wq = create_singlethread_workqueue("csco_amp_msg_wq");
+    if (!_g_state.msg_send_wq) {
+        amp_log_err("create_singlethread_workqueue(msg_send_wq) failed");
+        ret = -ENOMEM;
+        goto done;
+    }
+    _g_state.proc_name_wq = create_singlethread_workqueue("csco_amp_prc_wq");
+    if (!_g_state.proc_name_wq) {
+        amp_log_err("create_singlethread_workqueue(proc_name_wq) failed");
+        ret = -ENOMEM;
+        goto done;
+    }
 
     /* sockcallwatch registrations - do these last */
     err = amp_scw_init(&cb);
     if (err != 0) {
         ret = err;
         amp_log_err("amp_scw_init failed");
-        goto unreg;
+        goto done;
     }
+    _g_state.scw_init = true;
+
+    spin_lock_init(&_g_state.deferred_register_release_lock);
+    _g_state.deferred_register_release_init = true;
 
     /* register handler functions from inet_stream_ops and inet_dgram_ops.
        this should(!) cover both IPv4 and IPv6 because inet6_stream_ops
@@ -1712,42 +1756,42 @@ int init_module(void)
     if (err != 0) {
         amp_log_err("amp_scw_register_sendmsg(inet_stream_ops.sendmsg (%s NULL)) failed: %d", inet_stream_ops.sendmsg ? "!=" : "==", err);
         ret = err;
-        /* do not goto deinit_scw and return right away - continue and try to
+        /* do not goto done and return right away - continue and try to
            register more probes so the logs contain more information */
     }
     err = amp_scw_register_recvmsg(inet_stream_ops.recvmsg);
     if (err != 0) {
         amp_log_err("amp_scw_register_recvmsg(inet_stream_ops.recvmsg (%s NULL)) failed: %d", inet_stream_ops.recvmsg ? "!=" : "==", err);
         ret = err;
-        /* do not goto deinit_scw and return right away - continue and try to
+        /* do not goto done and return right away - continue and try to
            register more probes so the logs contain more information */
     }
     err = amp_scw_register_connect(inet_stream_ops.connect);
     if (err != 0) {
         amp_log_err("amp_scw_register_connect(inet_stream_ops.connect (%s NULL)) failed: %d", inet_stream_ops.connect ? "!=" : "==", err);
         ret = err;
-        /* do not goto deinit_scw and return right away - continue and try to
+        /* do not goto done and return right away - continue and try to
            register more probes so the logs contain more information */
     }
     err = amp_scw_register_accept(inet_stream_ops.accept);
     if (err != 0) {
         amp_log_err("amp_scw_register_accept(inet_stream_ops.accept (%s NULL)) failed: %d", inet_stream_ops.accept ? "!=" : "==", err);
         ret = err;
-        /* do not goto deinit_scw and return right away - continue and try to
+        /* do not goto done and return right away - continue and try to
            register more probes so the logs contain more information */
     }
     err = amp_scw_register_sendmsg(inet_dgram_ops.sendmsg);
     if (err != 0) {
         amp_log_err("amp_scw_register_sendmsg(inet_dgram_ops.sendmsg (%s NULL)) failed: %d", inet_dgram_ops.sendmsg ? "!=" : "==", err);
         ret = err;
-        /* do not goto deinit_scw and return right away - continue and try to
+        /* do not goto done and return right away - continue and try to
            register more probes so the logs contain more information */
     }
     err = amp_scw_register_recvmsg(inet_dgram_ops.recvmsg);
     if (err != 0) {
         amp_log_err("amp_scw_register_recvmsg(inet_dgram_ops.recvmsg (%s NULL)) failed: %d", inet_dgram_ops.recvmsg ? "!=" : "==", err);
         ret = err;
-        /* do not goto deinit_scw and return right away - continue and try to
+        /* do not goto done and return right away - continue and try to
            register more probes so the logs contain more information */
     }
 
@@ -1758,7 +1802,7 @@ int init_module(void)
     if (err != 0) {
         amp_log_err("amp_scw_register_post_accept(tcp_prot.accept (%s NULL)) failed: %d", tcp_prot.accept ? "!=" : "==", err);
         ret = err;
-        /* do not goto deinit_scw and return right away - continue and try to
+        /* do not goto done and return right away - continue and try to
            register more probes so the logs contain more information */
     }
 
@@ -1768,7 +1812,7 @@ int init_module(void)
     if (err != 0) {
         amp_log_err("amp_scw_register_release(inet_stream_ops.release (%s NULL)) failed: %d", inet_stream_ops.release ? "!=" : "==", err);
         ret = err;
-        /* do not goto deinit_scw and return right away - continue and try to
+        /* do not goto done and return right away - continue and try to
            register more probes so the logs contain more information */
     }
     err = amp_scw_register_release(inet_dgram_ops.release);
@@ -1777,33 +1821,43 @@ int init_module(void)
         ret = err;
     }
 
+done:
     if (ret != 0) {
-        goto deinit_scw;
+        cleanup_module();
+    }
+    return ret;
+}
+
+void cleanup_module(void)
+{
+    int err;
+    _deferred_register_release_t *item, *tmp;
+
+    if (_g_state.deferred_register_release_init) {
+        spin_lock(&_g_state.deferred_register_release_lock);
+        _g_state.deferred_register_release_disabled = true;
+        spin_unlock(&_g_state.deferred_register_release_lock);
+        list_for_each_entry_safe(item, tmp, &_g_state.deferred_register_release_list, list) {
+            (void)cancel_work_sync(&item->work);
+            list_del_init(&item->list);
+            kmem_cache_free(_g_state.register_release_kmem_cache, item);
+            item = NULL;
+            amp_log_info("removed deferred_register_release_list item");
+        }
+        if (!list_empty(&_g_state.deferred_register_release_list)) {
+            amp_log_err("deferred_register_release_list not empty");
+        }
     }
 
-    /* success */
-    goto done;
-
-deinit_scw:
-    err = amp_scw_deinit();
-    if (err != 0) {
-        amp_log_err("amp_scw_deinit failed");
+    if (_g_state.scw_init) {
+        err = amp_scw_deinit();
+        if (err != 0) {
+            amp_log_err("amp_scw_deinit failed");
+        }
     }
+    /* Now that amp_scw is deinitialized, no new socket callbacks will be run,
+     * and existing callbacks are complete. */
 
-unreg:
-    /* unregister generic netlink family */
-    err = GENL_UNREGISTER_FAMILY_WITH_OPS(&_g_genl_family, _g_genl_ops);
-    if (err != 0) {
-        amp_log_err("GENL_UNREGISTER_FAMILY_WITH_OPS failed");
-    }
-
-deinit_skactg:
-    amp_skactg_deinit(&_g_skactg);
-
-deinit_addrcache:
-    amp_addrcache_deinit(&_g_addrcache);
-
-wq_destroy:
     /* must flush the proc_name workqueue before the msg_send workqueue because
        _proc_name_task submits to the msg_send workqueue */
     if (_g_state.proc_name_wq) {
@@ -1815,10 +1869,27 @@ wq_destroy:
         flush_workqueue(_g_state.msg_send_wq);
         destroy_workqueue(_g_state.msg_send_wq);
         _g_state.msg_send_wq = NULL;
+        if (atomic_add_return(0, &_g_state.num_rec_queued) != 0) {
+            amp_log_err("num_rec_queued != 0");
+        }
     }
-    if (atomic_add_return(0, &_g_state.num_rec_queued) != 0) {
-        amp_log_err("num_rec_queued != 0");
+
+    if (_g_state.genl_registered) {
+        /* unregister generic netlink family */
+        err = GENL_UNREGISTER_FAMILY_WITH_OPS(&_g_genl_family, _g_genl_ops);
+        if (err != 0) {
+            amp_log_err("GENL_UNREGISTER_FAMILY_WITH_OPS failed");
+        }
     }
+
+    if (_g_state.skactg_init) {
+        amp_skactg_deinit(&_g_skactg);
+    }
+
+    if (_g_state.addrcache_init) {
+        amp_addrcache_deinit(&_g_addrcache);
+    }
+
     if (_g_state.register_release_kmem_cache) {
         kmem_cache_destroy(_g_state.register_release_kmem_cache);
         _g_state.register_release_kmem_cache = NULL;
@@ -1828,44 +1899,9 @@ wq_destroy:
         _g_state.proc_name_kmem_cache = NULL;
     }
 
-done:
-    return ret;
-}
-
-void cleanup_module(void)
-{
-    int err;
-
-    err = amp_scw_deinit();
-    if (err != 0) {
-        amp_log_err("amp_scw_deinit failed");
+    if (_g_state.portid_mutex_init) {
+        mutex_destroy(&_g_state.portid_mutex);
     }
-
-    /* unregister generic netlink family */
-    err = GENL_UNREGISTER_FAMILY_WITH_OPS(&_g_genl_family, _g_genl_ops);
-    if (err != 0) {
-        amp_log_err("GENL_UNREGISTER_FAMILY_WITH_OPS failed");
-    }
-
-    amp_skactg_deinit(&_g_skactg);
-
-    amp_addrcache_deinit(&_g_addrcache);
-
-    /* must flush the proc_name workqueue before the msg_send workqueue because
-       _proc_name_task submits to the msg_send workqueue */
-    flush_workqueue(_g_state.proc_name_wq);
-    destroy_workqueue(_g_state.proc_name_wq);
-    _g_state.proc_name_wq = NULL;
-    flush_workqueue(_g_state.msg_send_wq);
-    destroy_workqueue(_g_state.msg_send_wq);
-    _g_state.msg_send_wq = NULL;
-    if (atomic_add_return(0, &_g_state.num_rec_queued) != 0) {
-        amp_log_err("num_rec_queued != 0");
-    }
-    kmem_cache_destroy(_g_state.register_release_kmem_cache);
-    _g_state.register_release_kmem_cache = NULL;
-    kmem_cache_destroy(_g_state.proc_name_kmem_cache);
-    _g_state.proc_name_kmem_cache = NULL;
 
     amp_log_info("stopping ampnetworkflow");
 }

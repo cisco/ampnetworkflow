@@ -150,7 +150,12 @@ int amp_scw_deinit(void)
         _state.jprobes_head = j_next;
     }
 
-    /* probe handlers are now no longer running */
+    /* probe handlers are now no longer running:
+     * - probes are run with preemption disabled
+     * - unregistering a probe runs synchronize_sched()
+     * - "synchronize_sched() blocks until all currently-executing preempt-
+     *   disabled regions of code complete"
+     */
     mutex_destroy(&_state.register_mutex);
 
     kmem_cache_destroy(_state.kretprobe_kmem_cache);
