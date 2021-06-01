@@ -36,11 +36,6 @@
 #include <linux/sched/task.h>
 #endif
 
-/* Stringification macros */
-
-#define STR(s)  #s
-#define XSTR(s) STR(s)
-
 MODULE_LICENSE("GPL");      /* because we require several GPL-only symbols */
 MODULE_AUTHOR("Craig Davison <crdaviso@cisco.com>");
 
@@ -54,7 +49,7 @@ MODULE_AUTHOR("Craig Davison <crdaviso@cisco.com>");
     MODULE_DESCRIPTION("Cisco AMP Device Flow Control");
 #else
 #ifdef AMP_CUSTOM_KMOD
-    MODULE_DESCRIPTION("Cisco AMP Device Flow Control (user-built) " XSTR(AMP_CUSTOM_KMOD));
+    MODULE_DESCRIPTION("Cisco AMP Device Flow Control (user-built) " AMP_CUSTOM_KMOD);
 #else
     MODULE_DESCRIPTION("Cisco AMP Device Flow Control (user-built)");
 #endif
