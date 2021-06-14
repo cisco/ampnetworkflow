@@ -10,8 +10,8 @@ made by userland processes.
 ### Supported kernels
 
 This module has been tested on kernels 2.6.18 (as distributed in CentOS 5)
-through 4.13 (as distributed in Ubuntu 17.10). This module requires jprobes, so
-kernel version 4.15 and higher are not currently supported.
+through 4.14 (as distributed in Amazon Linux 2). This module requires jprobes,
+so kernel version 4.15 and higher are not currently supported.
 
 ### Build the module
 
